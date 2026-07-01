@@ -173,8 +173,8 @@ show_status() {
         is_recon_complete "$subj" && recon_done=$((recon_done + 1))
     done < <(get_subjects)
 
-    recon_running=$(pgrep -c "recon-all" 2>/dev/null || echo 0)
-    local running=$(pgrep -cf "process_one.py" 2>/dev/null || echo 0)
+    recon_running=$(pgrep -f "recon-all" 2>/dev/null | wc -l)
+    local running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
 
     echo "=============================="
     echo "进度报告 $(date '+%Y-%m-%d %H:%M:%S')"
@@ -235,7 +235,7 @@ main() {
 
         # 等待槽位
         while true; do
-            local running=$(pgrep -cf "process_one.py" 2>/dev/null || echo 0)
+            local running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
             [ "$running" -lt "$MAX_PARALLEL" ] && break
             sleep 10
         done
@@ -264,7 +264,7 @@ main() {
     echo "等待 recon-all..."
     while pgrep -f "recon-all" >/dev/null 2>&1; do
         sleep 30
-        echo "[$(date '+%H:%M:%S')] recon-all 剩余: $(pgrep -c recon-all 2>/dev/null || echo 0)"
+        echo "[$(date '+%H:%M:%S')] recon-all 剩余: $(pgrep -f recon-all 2>/dev/null | wc -l)"
     done
     echo "=== 全部完成 ==="
     show_status
