@@ -21,7 +21,7 @@ from preprocess.asl_to_cbf import asl_to_cbf
 from preprocess.t1_preprocess import t1_to_nifti, recon_all
 from preprocess.bold_preprocess import bold_to_nifti, bold_to_alff
 from surface.projection_coupling import project_to_surface, compute_coupling
-from dwi_tractography import (
+from preprocess.dwi_tractography import (
     dwi_dicom_to_mif, dwi_response_and_fod,
     dwi_tractography as dwi_track, dwi_connectome
 )

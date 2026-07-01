@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import logging
+import argparse
 import subprocess
 import numpy as np
 import nibabel as nib
@@ -35,6 +36,10 @@ def dwi_dicom_to_mif(subject_id):
     dwi_mif = out_dir / 'dwi.mif'
     if dwi_mif.exists():
         return str(dwi_mif)
+
+    if not dwi_dir.exists():
+        logger.warning(f'No DWI data for {subject_id}')
+        return None
 
     # Find main DWI (prefer b=1000)
     dwi_dcm_dir = None

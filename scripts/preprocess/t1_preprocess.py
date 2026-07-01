@@ -49,19 +49,19 @@ def recon_all(subject_id, t1_path, timeout=36000):
     if sphere.exists():
         return str(subj_dir)
 
-    # Clean incomplete recon-all
+    # Clean incomplete recon-all (must fully remove, FreeSurfer re-creates)
     if subj_dir.exists() and not sphere.exists():
         shutil.rmtree(str(subj_dir), ignore_errors=True)
-
-    ensure_dir(subj_dir)
+    # Do NOT create subj_dir here — FreeSurfer creates it via -i flag
 
     env = setup_freesurfer_env()
     cmd = ['recon-all', '-subjid', subject_id, '-i', str(t1_path),
            '-sd', str(FS_DIR), '-all', '-openmp', '4']
 
     logger.info(f'recon-all start for {subject_id}...')
-    dbg_log = subj_dir / 'scripts' / 'recon-all-debug.log'
-    dbg_log.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write debug log outside subject dir to avoid FreeSurfer conflicts
+    dbg_log = FS_DIR / f'{subject_id}_recon-debug.log'
 
     import time
     t0 = time.time()
@@ -72,6 +72,7 @@ def recon_all(subject_id, t1_path, timeout=36000):
 
     if sphere.exists():
         logger.info(f'recon-all done: {elapsed:.0f}s')
+        dbg_log.unlink(missing_ok=True)
         return str(subj_dir)
 
     # Log last lines for debugging
