@@ -1,0 +1,58 @@
+project:
+  name: "neurovascular_coupling_reproduction"
+  base_dir: "/mnt/d/project2"
+  doc_dir: "/doc"
+  materials_dir: "materials"
+
+data:
+  raw_dirs:
+    asl: "baseline_ASL"
+    bold: "baseline_fMRI"
+    t1: "baseline_T1"
+    dwi: "baseline_DWI"
+  visit_dirs:
+    asl: "visit_ASL"
+    bold: "visit_fMRI"
+    t1: "visit_T1"
+    dwi: "visit_DWI"
+
+freesurfer:
+  home: "/usr/local/freesurfer"
+  subjects_dir: "/mnt/d/project2/output/freesurfer"
+  template: "fsaverage5"
+
+asl:
+  tr: 4.0
+  te: 15.0
+  pld: 2.0  # Post-labeling delay in seconds
+  label_duration: 1.5  # Labeling duration in seconds
+  partition_coefficient: 0.9
+  blood_t1: 1.65  # T1 of blood at 3T
+  labeling_efficiency: 0.85
+  baseline_volumes: 80
+
+bold:
+  tr: 3.0
+  te: 32.0
+  high_pass: 0.01
+  low_pass: 0.08
+  volumes: 124
+  remove_first: 4
+  surface_fwhm: 6.0
+
+coupling:
+  neighborhood_fwhm: 15.0
+  min_snr: 50.0
+
+gam:
+  age_knots: 4
+  correction: "fdr"
+  alpha: 0.05
+
+pls:
+  n_permutations: 1000
+  n_bootstrap: 1000
+  min_covariance_ratio: 0.5  # minimum LV significance threshold
+
+yeo_networks: 7
+spin_n_permutations: 1000

@@ -1,0 +1,31 @@
+# Data (large DICOM files)
+data/
+output/
+doc/
+
+# FSL install package
+*.tar.gz
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
