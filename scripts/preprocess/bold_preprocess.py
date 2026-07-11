@@ -155,6 +155,34 @@ def despike(mc_path):
     return str(mc_path)
 
 
+def _resample_mask_to_bold(mask_img, bold_img):
+    """Resample a mask from T1 space to BOLD space using coordinate mapping."""
+    from scipy.ndimage import map_coordinates
+
+    mask_data = mask_img.get_fdata()
+    bold_data = bold_img.get_fdata()
+    bold_shape = bold_data.shape[:3] if bold_data.ndim == 4 else bold_data.shape
+
+    # Create BOLD voxel coordinates
+    coords = np.meshgrid(
+        np.arange(bold_shape[0]),
+        np.arange(bold_shape[1]),
+        np.arange(bold_shape[2]),
+        indexing='ij'
+    )
+    bold_voxel = np.stack([c.ravel() for c in coords])  # (3, N)
+
+    # BOLD voxel → BOLD world → T1 world → T1 voxel
+    bold_affine = bold_img.affine
+    mask_affine = mask_img.affine
+    bold_world = bold_affine[:3, :3] @ bold_voxel + bold_affine[:3, 3:4]
+    mask_voxel = np.linalg.inv(mask_affine[:3, :3]) @ (bold_world - mask_affine[:3, 3:4])
+
+    # Resample using interpolation
+    resampled = map_coordinates(mask_data, mask_voxel, order=0, mode='constant', cval=0)
+    return resampled.reshape(bold_shape)
+
+
 def brain_mask_and_seg(subject_id, mc_path):
     """Generate brain mask and WM/CSF segmentation from FreeSurfer."""
     mc_path = Path(mc_path)
@@ -173,49 +201,38 @@ def brain_mask_and_seg(subject_id, mc_path):
         return None
 
     masks = {}
+    bold_img = nib.load(str(mc_path))
+    bold_affine = bold_img.affine
+    bold_data = bold_img.get_fdata()
+    is_4d = bold_data.ndim == 4
+    bold_shape = bold_data.shape[:3] if is_4d else bold_data.shape
 
-    # Brain mask in BOLD space
-    # bbregister creates BOLD→T1 transform; with --inv, targ=input, mov=output template
-    brain_in_bold = out_dir / '_brainmask_bold.nii.gz'
-    if not brain_in_bold.exists():
-        run_cmd(['mri_vol2vol', '--mov', str(mc_path), '--reg', str(reg_file),
-                 '--o', str(brain_in_bold), '--targ', str(brainmask_mgz), '--inv',
-                 '--interp', 'nearest'])
+    # Brain mask: read from T1 space and resample to BOLD space
+    brainmask_img = nib.load(str(brainmask_mgz))
+    brain_resampled = _resample_mask_to_bold(brainmask_img, bold_img)
 
-    if brain_in_bold.exists():
-        brain_data = nib.load(str(brain_in_bold)).get_fdata()
-        if brain_data.ndim == 4:
-            brain_data = brain_data[..., 0]
-        bold_affine = nib.load(str(mc_path)).affine
-        bold_data = nib.load(str(mc_path)).get_fdata()
-        if bold_data.ndim == 4:
-            masked = bold_data * (brain_data > 0.5).astype(np.float32)[..., np.newaxis]
-        else:
-            masked = bold_data * (brain_data > 0.5).astype(np.float32)
-        brain_path = out_dir / f'{subject_id}_BOLD_brain.nii.gz'
-        nib.save(nib.Nifti1Image(masked, bold_affine), str(brain_path))
-        masks['brain'] = str(brain_path)
+    if is_4d:
+        masked = bold_data * (brain_resampled > 0.5).astype(np.float32)[..., np.newaxis]
+    else:
+        masked = bold_data * (brain_resampled > 0.5).astype(np.float32)
+    brain_path = out_dir / f'{subject_id}_BOLD_brain.nii.gz'
+    nib.save(nib.Nifti1Image(masked, bold_affine), str(brain_path))
+    masks['brain'] = str(brain_path)
 
-    # Aseg in BOLD space
-    aseg_in_bold = out_dir / '_aseg_bold.nii.gz'
-    if not aseg_in_bold.exists():
-        run_cmd(['mri_vol2vol', '--mov', str(mc_path), '--reg', str(reg_file),
-                 '--o', str(aseg_in_bold), '--targ', str(aseg_mgz), '--inv',
-                 '--interp', 'nearest'])
+    # Aseg: read from T1 space and resample to BOLD space
+    aseg_img = nib.load(str(aseg_mgz))
+    aseg_resampled = _resample_mask_to_bold(aseg_img, bold_img).astype(int)
 
-    if aseg_in_bold.exists():
-        aseg = nib.load(str(aseg_in_bold)).get_fdata().astype(int)
-        bold_affine = nib.load(str(mc_path)).affine
-        wm_labels = [2, 41, 7, 46, 251, 252, 253, 254, 255]
-        csf_labels = [4, 5, 14, 15, 24, 31, 43, 44, 63]
-        wm_mask = binary_erosion(np.isin(aseg, wm_labels), iterations=1).astype(np.float32)
-        csf_mask = binary_erosion(np.isin(aseg, csf_labels), iterations=1).astype(np.float32)
-        wm_path = out_dir / '_wm_mask.nii.gz'
-        csf_path = out_dir / '_csf_mask.nii.gz'
-        nib.save(nib.Nifti1Image(wm_mask, bold_affine), str(wm_path))
-        nib.save(nib.Nifti1Image(csf_mask, bold_affine), str(csf_path))
-        masks['wm'] = str(wm_path)
-        masks['csf'] = str(csf_path)
+    wm_labels = [2, 41, 7, 46, 251, 252, 253, 254, 255]
+    csf_labels = [4, 5, 14, 15, 24, 31, 43, 44, 63]
+    wm_mask = binary_erosion(np.isin(aseg_resampled, wm_labels), iterations=1).astype(np.float32)
+    csf_mask = binary_erosion(np.isin(aseg_resampled, csf_labels), iterations=1).astype(np.float32)
+    wm_path = out_dir / '_wm_mask.nii.gz'
+    csf_path = out_dir / '_csf_mask.nii.gz'
+    nib.save(nib.Nifti1Image(wm_mask, bold_affine), str(wm_path))
+    nib.save(nib.Nifti1Image(csf_mask, bold_affine), str(csf_path))
+    masks['wm'] = str(wm_path)
+    masks['csf'] = str(csf_path)
 
     return masks
 
