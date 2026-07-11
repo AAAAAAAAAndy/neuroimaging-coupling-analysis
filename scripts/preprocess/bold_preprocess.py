@@ -175,11 +175,11 @@ def brain_mask_and_seg(subject_id, mc_path):
     masks = {}
 
     # Brain mask in BOLD space
+    # bbregister creates BOLD→T1 mapping; we need T1→BOLD to map brainmask to BOLD
     brain_in_bold = out_dir / '_brainmask_bold.nii.gz'
     if not brain_in_bold.exists():
-        run_cmd(['mri_vol2vol', '--reg', str(reg_file), '--mov', str(mc_path),
-                 '--fstarg', '--i', str(brainmask_mgz), '--o', str(brain_in_bold),
-                 '--header', '--interp', 'nearest'])
+        run_cmd(['mri_vol2vol', '--mov', str(brainmask_mgz), '--reg', str(reg_file),
+                 '--o', str(brain_in_bold), '--fstarg', '--inv', '--interp', 'nearest'])
 
     if brain_in_bold.exists():
         brain_data = nib.load(str(brain_in_bold)).get_fdata()
@@ -192,9 +192,8 @@ def brain_mask_and_seg(subject_id, mc_path):
     # Aseg in BOLD space
     aseg_in_bold = out_dir / '_aseg_bold.nii.gz'
     if not aseg_in_bold.exists():
-        run_cmd(['mri_vol2vol', '--reg', str(reg_file), '--mov', str(mc_path),
-                 '--fstarg', '--i', str(aseg_mgz), '--o', str(aseg_in_bold),
-                 '--header', '--interp', 'nearest'])
+        run_cmd(['mri_vol2vol', '--mov', str(aseg_mgz), '--reg', str(reg_file),
+                 '--o', str(aseg_in_bold), '--fstarg', '--inv', '--interp', 'nearest'])
 
     if aseg_in_bold.exists():
         aseg = nib.load(str(aseg_in_bold)).get_fdata().astype(int)
