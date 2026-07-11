@@ -175,16 +175,22 @@ def brain_mask_and_seg(subject_id, mc_path):
     masks = {}
 
     # Brain mask in BOLD space
-    # bbregister creates BOLD→T1 mapping; we need T1→BOLD to map brainmask to BOLD
     brain_in_bold = out_dir / '_brainmask_bold.nii.gz'
     if not brain_in_bold.exists():
         run_cmd(['mri_vol2vol', '--mov', str(brainmask_mgz), '--reg', str(reg_file),
-                 '--o', str(brain_in_bold), '--fstarg', '--inv', '--interp', 'nearest'])
+                 '--o', str(brain_in_bold), '--template', str(mc_path), '--inv',
+                 '--interp', 'nearest'])
 
     if brain_in_bold.exists():
         brain_data = nib.load(str(brain_in_bold)).get_fdata()
-        bold_affine = nib.load(str(mc_path)).affine
-        masked = nib.load(str(mc_path)).get_fdata() * (brain_data > 0.5).astype(np.float32)
+        if brain_data.ndim == 4:
+            brain_data = brain_data[..., 0]
+        bold_data = nib.load(str(mc_path)).get_fdata()
+        if bold_data.ndim == 4:
+            bold_affine = nib.load(str(mc_path)).affine
+            masked = bold_data * (brain_data > 0.5).astype(np.float32)[..., np.newaxis]
+        else:
+            masked = bold_data * (brain_data > 0.5).astype(np.float32)
         brain_path = out_dir / f'{subject_id}_BOLD_brain.nii.gz'
         nib.save(nib.Nifti1Image(masked, bold_affine), str(brain_path))
         masks['brain'] = str(brain_path)
@@ -193,7 +199,8 @@ def brain_mask_and_seg(subject_id, mc_path):
     aseg_in_bold = out_dir / '_aseg_bold.nii.gz'
     if not aseg_in_bold.exists():
         run_cmd(['mri_vol2vol', '--mov', str(aseg_mgz), '--reg', str(reg_file),
-                 '--o', str(aseg_in_bold), '--fstarg', '--inv', '--interp', 'nearest'])
+                 '--o', str(aseg_in_bold), '--template', str(mc_path), '--inv',
+                 '--interp', 'nearest'])
 
     if aseg_in_bold.exists():
         aseg = nib.load(str(aseg_in_bold)).get_fdata().astype(int)
