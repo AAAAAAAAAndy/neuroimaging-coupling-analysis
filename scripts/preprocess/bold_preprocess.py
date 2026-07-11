@@ -175,19 +175,20 @@ def brain_mask_and_seg(subject_id, mc_path):
     masks = {}
 
     # Brain mask in BOLD space
+    # bbregister creates BOLD→T1 transform; with --inv, targ=input, mov=output template
     brain_in_bold = out_dir / '_brainmask_bold.nii.gz'
     if not brain_in_bold.exists():
-        run_cmd(['mri_vol2vol', '--mov', str(brainmask_mgz), '--reg', str(reg_file),
-                 '--o', str(brain_in_bold), '--template', str(mc_path), '--inv',
+        run_cmd(['mri_vol2vol', '--mov', str(mc_path), '--reg', str(reg_file),
+                 '--o', str(brain_in_bold), '--targ', str(brainmask_mgz), '--inv',
                  '--interp', 'nearest'])
 
     if brain_in_bold.exists():
         brain_data = nib.load(str(brain_in_bold)).get_fdata()
         if brain_data.ndim == 4:
             brain_data = brain_data[..., 0]
+        bold_affine = nib.load(str(mc_path)).affine
         bold_data = nib.load(str(mc_path)).get_fdata()
         if bold_data.ndim == 4:
-            bold_affine = nib.load(str(mc_path)).affine
             masked = bold_data * (brain_data > 0.5).astype(np.float32)[..., np.newaxis]
         else:
             masked = bold_data * (brain_data > 0.5).astype(np.float32)
@@ -198,8 +199,8 @@ def brain_mask_and_seg(subject_id, mc_path):
     # Aseg in BOLD space
     aseg_in_bold = out_dir / '_aseg_bold.nii.gz'
     if not aseg_in_bold.exists():
-        run_cmd(['mri_vol2vol', '--mov', str(aseg_mgz), '--reg', str(reg_file),
-                 '--o', str(aseg_in_bold), '--template', str(mc_path), '--inv',
+        run_cmd(['mri_vol2vol', '--mov', str(mc_path), '--reg', str(reg_file),
+                 '--o', str(aseg_in_bold), '--targ', str(aseg_mgz), '--inv',
                  '--interp', 'nearest'])
 
     if aseg_in_bold.exists():
