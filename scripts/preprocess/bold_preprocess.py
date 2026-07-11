@@ -131,7 +131,8 @@ def _flirt_motion_correct(subject_id, bold_path):
 
 def despike(mc_path):
     """Remove intensity outliers with AFNI 3dDespike."""
-    despike_path = mc_path.parent / f'{Path(mc_path).stem}_despike.nii.gz'
+    mc_path = Path(mc_path)
+    despike_path = mc_path.parent / f'{mc_path.stem}_despike.nii.gz'
     if is_step_done(despike_path):
         return str(despike_path)
 
@@ -156,6 +157,7 @@ def despike(mc_path):
 
 def brain_mask_and_seg(subject_id, mc_path):
     """Generate brain mask and WM/CSF segmentation from FreeSurfer."""
+    mc_path = Path(mc_path)
     subj_fs = FS_DIR / subject_id
     reg_file = subj_fs / 'mri' / 'register.dat'
     out_dir = mc_path.parent
