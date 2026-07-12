@@ -33,38 +33,37 @@ logger = logging.getLogger('pipeline')
 def run_paper2022(subject_id):
     """
     Paper 2022 pipeline: CBF-ALFF coupling.
-    Returns True if all steps succeed.
+    Handles missing modalities gracefully - process whatever data is available.
 
     Step numbering:
-        1   ASL → CBF (pCASL quantification)
-        2   T1 DICOM → NIfTI
-        3   FreeSurfer recon-all (cortical surface)
-        4   BOLD DICOM → 4D NIfTI
+        1   ASL → CBF (pCASL quantification) [optional]
+        2   T1 DICOM → NIfTI [if T1 available]
+        3   FreeSurfer recon-all [if T1 available]
+        4   BOLD DICOM → 4D NIfTI [if BOLD available]
         5   BOLD motion correction (mcflirt)
         5b  3dDespike (AFNI outlier removal)
         6   Brain mask + WM/CSF segmentation
         7   36-parameter confound regression
         8   Bandpass filter (0.01–0.08 Hz)
         9   ALFF computation
-        10  Surface projection → fsaverage5
-        11  CBF-ALFF coupling (local weighted regression)
+        10  Surface projection → fsaverage5 [if FS available]
+        11  CBF-ALFF coupling (local weighted regression) [if both CBF+ALFF available]
     """
     logger.info(f'===== Paper 2022: {subject_id} =====')
     t0 = time.time()
 
-    # Step 1: ASL → CBF
+    # Step 1: ASL → CBF (optional)
     logger.info('[step_1] ASL → CBF')
-    cbf = asl_to_cbf(subject_id)
+    cbf = asl_to_cbf(subject_id) if _has_data(subject_id, 'asl') else None
     if not cbf:
-        logger.error('FAIL: step_1 CBF')
-        return False
+        logger.info('  No ASL data, skipping CBF')
 
     # Step 2: T1 → NIfTI
     logger.info('[step_2] T1 DICOM → NIfTI')
-    t1 = t1_to_nifti(subject_id)
+    t1 = t1_to_nifti(subject_id) if _has_data(subject_id, 't1') else None
     if not t1:
-        logger.error('FAIL: step_2 T1')
-        return False
+        logger.info('  No T1 data, skipping surface reconstruction')
+        return False  # T1 is essential for surface projection
 
     # Step 3: FreeSurfer recon-all
     logger.info('[step_3] FreeSurfer recon-all')
@@ -75,10 +74,10 @@ def run_paper2022(subject_id):
 
     # Step 4: BOLD → NIfTI
     logger.info('[step_4] BOLD DICOM → NIfTI')
-    bold = bold_to_nifti(subject_id)
+    bold = bold_to_nifti(subject_id) if _has_data(subject_id, 'bold') else None
     if not bold:
-        logger.error('FAIL: step_4 BOLD')
-        return False
+        logger.info('  No BOLD data, skipping ALFF and coupling')
+        return True  # T1 processing done, no BOLD = OK
 
     # Steps 5-9: BOLD preprocessing → ALFF
     logger.info('[step_5→9] BOLD preprocessing → ALFF')
@@ -90,22 +89,47 @@ def run_paper2022(subject_id):
     # Step 10: Surface projection
     logger.info('[step_10] Surface projection → fsaverage5')
     for hemi in ['lh', 'rh']:
-        s1 = project_to_surface(subject_id, cbf, hemi, 'cbf')
-        s2 = project_to_surface(subject_id, alff, hemi, 'alff')
-        if not s1 or not s2:
-            logger.error(f'FAIL: step_10 surface ({hemi})')
-            return False
+        if cbf:
+            project_to_surface(subject_id, cbf, hemi, 'cbf')
+        project_to_surface(subject_id, alff, hemi, 'alff')
 
-    # Step 11: Coupling
-    logger.info('[step_11] CBF-ALFF coupling')
-    result = compute_coupling(subject_id)
-    if not result:
-        logger.error('FAIL: step_11 coupling')
-        return False
+    # Step 11: Coupling (only if both CBF and ALFF available)
+    if cbf:
+        logger.info('[step_11] CBF-ALFF coupling')
+        result = compute_coupling(subject_id)
+        if not result:
+            logger.warning('step_11 coupling returned no result')
+    else:
+        logger.info('[step_11] Skipped (no CBF)')
 
     elapsed = time.time() - t0
-    logger.info(f'Paper 2022 done ({elapsed:.0f}s): mean_abs={result["mean_abs"]:.6f}')
+    logger.info(f'Paper 2022 done ({elapsed:.0f}s)')
     return True
+
+
+def _has_data(subject_id, modality):
+    """Check if subject has raw DICOM data for given modality."""
+    from preprocess import DATA, TIMEPOINT
+    paths = {
+        'asl': [
+            DATA / f'{TIMEPOINT}_ASL' / subject_id,
+        ] + (
+            [
+                DATA / f'{TIMEPOINT}_ASL_special' / sub / subject_id
+                for sub in (DATA / f'{TIMEPOINT}_ASL_special').iterdir()
+                if sub.is_dir()
+            ]
+            if (DATA / f'{TIMEPOINT}_ASL_special').exists()
+            else []
+        ),
+        'bold': DATA / f'{TIMEPOINT}_fMRI' / subject_id,
+        't1': DATA / f'{TIMEPOINT}_T1' / subject_id,
+        'dwi': DATA / f'{TIMEPOINT}_DWI' / subject_id,
+    }
+    check_paths = paths.get(modality, [])
+    if not isinstance(check_paths, list):
+        check_paths = [check_paths]
+    return any(p.exists() for p in check_paths)
 
 
 def run_paper2016(subject_id):

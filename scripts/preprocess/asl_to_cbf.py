@@ -7,9 +7,27 @@ import numpy as np
 import nibabel as nib
 import pydicom
 from pathlib import Path
-from preprocess import OUT_ASL, DATA_ASL, is_step_done, ensure_dir
+from preprocess import OUT_ASL, DATA_ASL, DATA, TIMEPOINT, is_step_done, ensure_dir
 
 logger = logging.getLogger('preprocess.asl')
+
+
+def _find_asl_dir(subject_id):
+    """Find ASL DICOM directory across standard and special locations."""
+    # Standard location
+    standard = DATA_ASL / subject_id
+    if standard.exists():
+        return standard
+
+    # ASL_special: check subdirectories
+    special_dir = DATA / f'{TIMEPOINT}_ASL_special'
+    if special_dir.exists():
+        for subdir in special_dir.iterdir():
+            if subdir.is_dir():
+                candidate = subdir / subject_id
+                if candidate.exists():
+                    return candidate
+    return None
 
 
 def asl_to_cbf(subject_id):
@@ -17,15 +35,21 @@ def asl_to_cbf(subject_id):
     Convert ASL DICOM to CBF NIfTI.
     Strategy: prefer DERIVED perfusion images (scanner-computed CBF).
     Fallback: compute CBF from control-label pairs using pCASL formula.
+    Output path mirrors data directory structure.
     """
-    out = OUT_ASL / subject_id / f'{subject_id}_CBF.nii.gz'
+    # Find source ASL directory
+    asl_dir = _find_asl_dir(subject_id)
+    if not asl_dir or not asl_dir.exists():
+        return None
+
+    # Compute output path mirroring data structure
+    # e.g., data/baseline_ASL_special/ASL_3D_tra_M0/A1_0460/ → output/baseline_ASL_special/ASL_3D_tra_M0/A1_0460/
+    rel_path = asl_dir.relative_to(DATA)
+    out_dir = BASE / 'output' / rel_path
+    out = out_dir / f'{subject_id}_CBF.nii.gz'
     if is_step_done(out):
         return str(out)
-    ensure_dir(out.parent)
-
-    asl_dir = DATA_ASL / subject_id
-    if not asl_dir.exists():
-        return None
+    ensure_dir(out_dir)
 
     # Try DERIVED images first
     result = _try_derived_cbf(asl_dir, out)

@@ -62,13 +62,24 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM
 
-# ---- 受试者列表 ----
+# ---- 受试者列表（所有模态并集）----
 get_subjects() {
-    comm -12 \
-        <(ls "$DATA/$ASL_PREFIX" | grep -E "^(B1_|A1_|sub)" | sort) \
-        <(comm -12 \
-            <(ls "$DATA/$BOLD_PREFIX" | grep -E "^(B1_|A1_|sub)" | sort) \
-            <(ls "$DATA/$T1_PREFIX" | grep -E "^(B1_|A1_|sub)" | sort))
+    # Collect all unique subject IDs from all modality directories
+    # Handles: baseline_ASL/, baseline_ASL_special/*/, visit_*/
+    {
+        # Standard baseline modalities
+        ls "$DATA/${TIMEPOINT}_ASL" 2>/dev/null
+        ls "$DATA/${TIMEPOINT}_fMRI" 2>/dev/null
+        ls "$DATA/${TIMEPOINT}_T1" 2>/dev/null
+        ls "$DATA/${TIMEPOINT}_DWI" 2>/dev/null
+
+        # ASL_special: deeper nesting (e.g., ASL_3D_tra_M0/A1_0460/)
+        if [ -d "$DATA/${TIMEPOINT}_ASL_special" ]; then
+            for subdir in "$DATA/${TIMEPOINT}_ASL_special"/*/; do
+                ls "$subdir" 2>/dev/null
+            done
+        fi
+    } | grep -E "^(B1_|A1_|sub)" | sort -u
 }
 
 # ---- 步骤状态检查 ----
