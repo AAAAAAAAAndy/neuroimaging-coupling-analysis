@@ -9,6 +9,7 @@ import time
 import logging
 import argparse
 import subprocess
+import shutil
 import numpy as np
 import nibabel as nib
 from pathlib import Path
@@ -19,11 +20,19 @@ logger = logging.getLogger('DWI_2016')
 from preprocess import BASE, DATA, FS_DIR, OUT_DWI as OUT
 
 
-def run_cmd(cmd, timeout=3600):
+def run_cmd(cmd, timeout=3600, cwd=None):
     logger.info(f'RUN: {cmd}')
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                       timeout=timeout, cwd=cwd)
     if r.returncode != 0:
         logger.warning(f'  STDERR: {r.stderr[:500]}')
+    # Clean up MRtrix temp files from cwd
+    if cwd:
+        import glob
+        for tmp in glob.glob(os.path.join(cwd, 'dwi2response-tmp-*')):
+            shutil.rmtree(tmp, ignore_errors=True)
+        for tmp in glob.glob(os.path.join(cwd, 'dwi2fod-tmp-*')):
+            shutil.rmtree(tmp, ignore_errors=True)
     return r
 
 
@@ -74,16 +83,18 @@ def dwi_response_and_fod(dwi_mif):
     if fod_file.exists() and resp_file.exists():
         return str(resp_file), str(fod_file)
 
+    cwd = str(out_dir)
+
     if not resp_file.exists():
-        run_cmd(f'dwi2response tournier {dwi_mif} {resp_file} -quiet', timeout=600)
+        run_cmd(f'dwi2response tournier {dwi_mif} {resp_file} -quiet', timeout=600, cwd=cwd)
     if not resp_file.exists():
-        run_cmd(f'dwi2response dhollander {dwi_mif} {resp_file} -quiet', timeout=600)
+        run_cmd(f'dwi2response dhollander {dwi_mif} {resp_file} -quiet', timeout=600, cwd=cwd)
 
     if not resp_file.exists():
         logger.error('Response estimation failed')
         return None, None
 
-    run_cmd(f'dwi2fod csd {dwi_mif} {resp_file} {fod_file} -quiet', timeout=1800)
+    run_cmd(f'dwi2fod csd {dwi_mif} {resp_file} {fod_file} -quiet', timeout=1800, cwd=cwd)
 
     if fod_file.exists():
         return str(resp_file), str(fod_file)
@@ -97,13 +108,13 @@ def dwi_tractography(fod_file, subject_id):
     if tracks.exists():
         return str(tracks)
 
-    # SD_STREAM = deterministic-like through FOD peaks - closest to paper's "deterministic streamline"
+    cwd = str(out_dir)
     cmd = (f'tckgen {fod_file} {tracks} '
            f'-algorithm SD_STREAM '
            f'-angle 45 -cutoff 0.1 -maxlength 250 -minlength 10 '
            f'-select 50000 -seed_dynamic {fod_file} -quiet')
     t0 = time.time()
-    run_cmd(cmd, timeout=7200)
+    run_cmd(cmd, timeout=7200, cwd=cwd)
     logger.info(f'Tracking took {time.time()-t0:.0f}s')
 
     if tracks.exists():
