@@ -19,7 +19,7 @@ if _scripts_dir not in sys.path:
 
 from preprocess.asl_to_cbf import asl_to_cbf
 from preprocess.t1_preprocess import t1_to_nifti, recon_all
-from preprocess.bold_preprocess import bold_to_nifti, bold_to_alff
+from preprocess.bold_preprocess import bold_to_nifti, bold_to_alff, bold_to_fc
 from surface.projection_coupling import project_to_surface, compute_coupling
 from preprocess.dwi_tractography import (
     dwi_dicom_to_mif, dwi_response_and_fod,
@@ -119,6 +119,7 @@ def run_paper2016(subject_id):
         12c  FOD estimation (dwi2fod CSD)
         12d  Deterministic streamline tractography (tckgen SD_STREAM)
         12e  SC connectome matrix (tck2connectome)
+        12f  BOLD → FC matrix (for PLS)
     """
     logger.info(f'===== Paper 2016: {subject_id} =====')
     t0 = time.time()
@@ -150,6 +151,23 @@ def run_paper2016(subject_id):
     if not sc:
         logger.error('FAIL: step_12e connectome')
         return False
+
+    # Step 12f: BOLD → FC matrix
+    logger.info('[step_12f] BOLD → FC matrix')
+    bold_path = OUT_FMRI / subject_id / f'{subject_id}_BOLD.nii.gz'
+    if not bold_path.exists():
+        # Try to convert BOLD from DICOM
+        bold = bold_to_nifti(subject_id)
+        if bold:
+            bold_path = Path(bold)
+
+    if bold_path.exists():
+        fc = bold_to_fc(subject_id, str(bold_path))
+        if fc is not None:
+            out_dir = OUT_DWI / subject_id
+            out_dir.mkdir(parents=True, exist_ok=True)
+            np.save(str(out_dir / 'FC_matrix.npy'), fc)
+            logger.info(f'FC matrix: {fc.shape}')
 
     elapsed = time.time() - t0
     logger.info(f'Paper 2016 done ({elapsed:.0f}s): SC={sc}')

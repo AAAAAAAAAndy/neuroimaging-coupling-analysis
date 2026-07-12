@@ -314,7 +314,81 @@ def bold_to_alff(subject_id, bold_path):
     """Full BOLD preprocessing pipeline → ALFF."""
     alff_path = OUT_FMRI / subject_id / f'{subject_id}_ALFF.nii.gz'
     if is_step_done(alff_path):
-        return str(alff_path)
+    return str(alff_path)
+
+
+def bold_to_fc(subject_id, bold_path, n_regions=114):
+    """
+    Compute FC matrix from BOLD time series + FreeSurfer parcellation.
+    Used for Paper 2016 PLS analysis.
+    """
+    import nibabel as nib
+    from scipy import stats
+
+    img = nib.load(bold_path)
+    data = img.getfdata().astype(np.float32)
+    if data.ndim != 4:
+        return None
+
+    nx, ny, nz, nt = data.shape
+
+    # Get FreeSurfer parcellation
+    subj_fs = FS_DIR / subject_id
+    if not (subj_fs / 'surf' / 'lh.sphere.reg').exists():
+        return None
+
+    parc_file = subj_fs / 'mri' / 'aparc+aseg.mgz'
+    if not parc_file.exists():
+        parc_file = subj_fs / 'mri' / 'aseg.mgz'
+    if not parc_file.exists():
+        return None
+
+    parc_img = nib.load(str(parc_file))
+    parc_data = parc_img.getfdata().astype(int)
+
+    # Resample parcellation to BOLD space
+    bold_affine = img.affine
+    bold_shape = data.shape[:3]
+    coords = np.meshgrid(
+        np.arange(bold_shape[0]), np.arange(bold_shape[1]),
+        np.arange(bold_shape[2]), indexing='ij'
+    )
+    bold_voxel = np.stack([c.ravel() for c in coords])
+    bold_world = bold_affine[:3, :3] @ bold_voxel + bold_affine[:3, 3:4]
+    parc_voxel = np.linalg.inv(parc_img.affine[:3, :3]) @ (
+        bold_world - parc_img.affine[:3, 3:4]
+    )
+    from scipy.ndimage import map_coordinates
+    parc_bold = map_coordinates(parc_data, parc_voxel, order=0,
+                                mode='constant', cval=0).reshape(bold_shape)
+
+    # Extract regional time series
+    unique_rois = np.unique(parc_bold)
+    unique_rois = unique_rois[(unique_rois != 0) & (unique_rois < 1000)]
+
+    regional_ts = np.zeros((len(unique_rois), nt), dtype=np.float32)
+    for i, roi in enumerate(unique_rois):
+        mask = parc_bold == roi
+        if np.sum(mask) > 0:
+            regional_ts[i] = np.mean(data[mask], axis=0)
+
+    # Detrend
+    t = np.arange(nt, dtype=np.float32)
+    t_n = (t - t.mean()) / (t.std() + 1e-10)
+    conf = np.column_stack([np.ones(nt), t_n])
+    beta = np.linalg.lstsq(conf, regional_ts.T, rcond=None)[0]
+    detrended = regional_ts - (conf @ beta).T
+
+    # FC matrix
+    fc_matrix = np.corrcoef(detrended)
+    np.fill_diagonal(fc_matrix, 0)
+
+    # Save
+    out_dir = OUT_DWI / subject_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    np.save(str(out_dir / 'FC_matrix.npy'), fc_matrix)
+    logger.info(f'FC matrix: {fc_matrix.shape}')
+    return fc_matrix
 
     # Motion correction
     mc_path = motion_correct(subject_id, bold_path)
