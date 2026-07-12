@@ -101,6 +101,21 @@ is_recon_complete() {
     [ -f "$FS_DIR/$1/surf/lh.sphere.reg" ]
 }
 
+# ---- 确保 T1 NIfTI 存在 ----
+ensure_t1_nifti() {
+    local subj=$1
+    local t1="$OUT_T1/$subj/${subj}_T1.nii.gz"
+    [ -f "$t1" ] && return 0
+
+    mkdir -p "$OUT_T1/$subj"
+    local src="$DATA/$T1_PREFIX/$subj"
+    [ ! -d "$src" ] && return 1
+
+    dcm2niix -z y -f "${subj}_T1" -o "$OUT_T1/$subj" \
+        -p n -v 0 "$src" 2>/dev/null || true
+    [ -f "$t1" ]
+}
+
 # ---- 单个被试处理 ----
 process_subject() {
     local subj=$1
@@ -108,15 +123,16 @@ process_subject() {
 
     echo "[$(date '+%H:%M:%S')] [START] $subj" >> "$logfile"
 
-    # 逐步检查，跳过已完成步骤
-    if ! step_done "$subj" step_1; then
-        echo "[$(date '+%H:%M:%S')] [step_1] ASL→CBF" >> "$logfile"
-    fi
-    if ! step_done "$subj" step_2; then
-        echo "[$(date '+%H:%M:%S')] [step_2] T1→NIfTI" >> "$logfile"
-    fi
-    # ... 其他步骤由 process_one.py 内部逐个检查
+    # 确保 T1 NIfTI 存在
+    ensure_t1_nifti "$subj" || { echo "NO T1" >> "$logfile"; return 1; }
 
+    # 等待 recon-all 完成（需要 FS 表面做 surface projection）
+    echo "[$(date '+%H:%M:%S')] [wait] 等待 recon-all..." >> "$logfile"
+    while ! is_recon_complete "$subj"; do
+        sleep 30
+    done
+
+    # 运行主管道
     "$MIND" "$BASE/scripts/process_one.py" --subject "$subj" >> "$logfile" 2>&1
     local rc=$?
 
@@ -222,6 +238,35 @@ show_status() {
     done < <(get_subjects)
 }
 
+# ---- 启动所有 recon-all（在需要处理前）----
+start_all_recon() {
+    local subjects=$(get_subjects)
+    local total=$(echo "$subjects" | wc -l)
+    local count=0
+
+    for subj in $subjects; do
+        count=$((count+1))
+        is_recon_complete "$subj" && continue
+        ensure_t1_nifti "$subj" || continue
+
+        # 等待槽位
+        while [ $(pgrep -c "recon-all" 2>/dev/null || echo 0) -ge $MAX_RECON ]; do
+            sleep 15
+        done
+
+        local t1="$OUT_T1/$subj/${subj}_T1.nii.gz"
+        [ ! -f "$t1" ] && continue
+
+        # 清理不完整的目录
+        [ -d "$FS_DIR/$subj" ] && [ ! -f "$FS_DIR/$subj/surf/lh.sphere.reg" ] && \
+            rm -rf "$FS_DIR/$subj"
+
+        echo "[$count/$total] RECON $subj"
+        nohup recon-all -subjid "$subj" -i "$t1" -sd "$FS_DIR" \
+            -all -openmp 4 > "$FS_DIR/${subj}_recon.log" 2>&1 &
+    done
+}
+
 # ---- 主循环 ----
 main() {
     echo "========================================"
@@ -233,13 +278,18 @@ main() {
     local total=$(echo "$subjects" | wc -l)
     echo "共 $total 个受试者"
 
+    # Phase 1: 启动所有 recon-all
+    echo "=== Phase 1: 启动 recon-all ==="
+    start_all_recon
+
+    # Phase 2: 逐个处理（内部等待各自的 recon-all）
+    echo "=== Phase 2: 逐个处理 ==="
     local count=0
     for subj in $subjects; do
-        count=$((count + 1))
+        count=$((count+1))
 
         if is_complete "$subj"; then
             echo "[$count/$total] SKIP $subj (complete)"
-            start_recon "$subj"
             continue
         fi
 
@@ -250,19 +300,8 @@ main() {
             sleep 10
         done
 
-        # 等待内存
-        local avail=$(free -g | awk '/Mem:/{print $7}')
-        while [ "$avail" -lt 4 ]; do
-            echo "[$(date '+%H:%M:%S')] 等待内存 (${avail}GB)..."
-            sleep 15
-            avail=$(free -g | awk '/Mem:/{print $7}')
-        done
-
         echo "[$count/$total] START $subj"
-        (
-            process_subject "$subj"
-            start_recon "$subj"
-        ) &
+        process_subject "$subj" >> "$LOG_DIR/${subj}.log" 2>&1 &
         CHILD_PIDS+=($!)
     done
 
@@ -271,7 +310,7 @@ main() {
     wait
     echo "=== 预处理完成 ==="
 
-    echo "等待 recon-all..."
+    echo "等待剩余 recon-all..."
     while pgrep -f "recon-all" >/dev/null 2>&1; do
         sleep 30
         echo "[$(date '+%H:%M:%S')] recon-all 剩余: $(pgrep -f recon-all 2>/dev/null | wc -l)"
