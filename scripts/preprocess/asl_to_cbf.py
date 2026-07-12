@@ -13,37 +13,122 @@ logger = logging.getLogger('preprocess.asl')
 
 
 def _find_asl_dir(subject_id):
-    """Find ASL DICOM directory across standard and special locations.
-    Returns (path, mode) where mode is 'standard' or 'special'.
-    Prefers ASL_3D_tra_M0 over ASL_3D_tra_iso.
+    """Find ASL DICOM directory across standard, special, and visit locations.
+    Returns (path, mode) where mode is:
+        'standard' - flat DICOM (baseline_ASL)
+        'special'  - mosaic in baseline_ASL_special/*/
+        'visit_derived' - DERIVED CBF in visit_ASL/*/CBF_*/
+        'visit_raw' - raw ASL in visit_ASL/*/3D ASL*/
     """
     # Standard location
-    standard = DATA_ASL / subject_id
+    standard = DATA / f'{TIMEPOINT}_ASL' / subject_id
     if standard.exists():
-        return standard, 'standard'
+        if standard.is_dir():
+            # Check contents: DICOM files (baseline) or subdirectories (visit)
+            has_dicom = False
+            for f in standard.iterdir():
+                if f.is_file() and (f.name.startswith('Z') or f.name.endswith('.dcm') or f.name[0].isdigit()):
+                    has_dicom = True
+                    break
+
+            if has_dicom:
+                return standard, 'standard'
+
+            # Visit format: contains subdirectories
+            for sub in sorted(standard.iterdir()):
+                if sub.is_dir() and 'CBF' in sub.name.upper():
+                    return sub, 'visit_derived'
+            for sub in sorted(standard.iterdir()):
+                if sub.is_dir() and 'ASL' in sub.name.upper():
+                    return sub, 'visit_raw'
 
     # ASL_special: prefer M0 over iso
     special_dir = DATA / f'{TIMEPOINT}_ASL_special'
     if special_dir.exists():
-        # Prefer M0 subdirectory
         for name in ['ASL_3D_tra_M0', 'ASL_3D_tra_iso']:
             candidate = special_dir / name / subject_id
             if candidate.exists():
                 return candidate, 'special'
+
     return None, None
+
+
+def _copy_derived_cbf(dcm_dir, out):
+    """Copy scanner-derived CBF to NIfTI."""
+    files = sorted(dcm_dir.iterdir())
+    if not files:
+        return None
+    slices = []
+    for f in files:
+        try:
+            ds = pydicom.dcmread(str(f), force=True)
+            slices.append(ds.pixel_array.astype(np.float32))
+        except Exception:
+            continue
+    if not slices:
+        return None
+    vol = np.stack(slices, axis=-1)
+    ds0 = pydicom.dcmread(str(files[0]), force=True)
+    aff = np.diag([
+        float(ds0.PixelSpacing[0]), float(ds0.PixelSpacing[1]),
+        float(getattr(ds0, 'SliceThickness', 4)), 1.0
+    ])
+    nib.save(nib.Nifti1Image(vol, aff), str(out))
+    logger.info(f'CBF (visit DERIVED): {vol.shape}, mean={vol.mean():.1f}')
+    return str(out)
+
+
+def _mosaic_to_cbf(dcm_dir, out):
+    """Decode mosaic ASL and compute CBF."""
+    from preprocess.asl_special import decode_mosaic
+
+    files = sorted(dcm_dir.iterdir())
+    if len(files) < 2:
+        return None
+
+    volumes = []
+    for f in files:
+        try:
+            vol, ds = decode_mosaic(f)
+            volumes.append(vol)
+        except Exception as e:
+            logger.warning(f'Mosaic decode failed for {f}: {e}')
+            continue
+
+    if len(volumes) < 2:
+        return None
+
+    m0 = volumes[0]
+    perf = np.mean(volumes[1:], axis=0)
+
+    PLD, tau, T1a = 1.5, 1.5, 1.65
+    alpha, lam = 0.85, 0.9
+    unit_convert = 6000.0
+
+    m0_safe = np.where(m0 > 0, m0, np.nan)
+    cbf = unit_convert * perf * lam * np.exp(PLD / T1a) / \
+          (2.0 * alpha * T1a * (1.0 - np.exp(-tau / T1a)) * m0_safe)
+    cbf = np.nan_to_num(cbf, nan=0.0, posinf=0.0, neginf=0.0)
+    cbf = np.clip(cbf, 0, 200)
+
+    ds0 = pydicom.dcmread(str(files[0]), force=True)
+    pix = [float(x) for x in getattr(ds0, 'PixelSpacing', [3, 3])]
+    aff = np.diag([pix[0], pix[1], float(getattr(ds0, 'SliceThickness', 4)), 1.0])
+    nib.save(nib.Nifti1Image(cbf, aff), str(out))
+    logger.info(f'CBF (mosaic): {cbf.shape}, mean={np.nanmean(cbf[m0>0]):.1f}')
+    return str(out)
 
 
 def asl_to_cbf(subject_id):
     """
     Convert ASL DICOM to CBF NIfTI.
-    Handles both standard (DERIVED/pCASL) and special mosaic formats.
+    Handles standard (DERIVED/pCASL), mosaic (ASL_special), and visit DERIVED.
     Output path mirrors data directory structure.
     """
     asl_dir, mode = _find_asl_dir(subject_id)
     if not asl_dir:
         return None
 
-    # Output path mirrors data structure
     rel_path = asl_dir.relative_to(DATA)
     out_dir = BASE / 'output' / rel_path
     out = out_dir / f'{subject_id}_CBF.nii.gz'
@@ -51,17 +136,16 @@ def asl_to_cbf(subject_id):
         return str(out)
     ensure_dir(out_dir)
 
-    # ASL_special: mosaic format → special handler
+    if mode == 'visit_derived':
+        return _copy_derived_cbf(asl_dir, out)
+    if mode == 'visit_raw':
+        return _mosaic_to_cbf(asl_dir, out)
     if mode == 'special':
-        from preprocess.asl_special import asl_special_to_cbf
-        return asl_special_to_cbf(subject_id, asl_dir, out)
+        return _mosaic_to_cbf(asl_dir, out)
 
-    # Standard: try DERIVED images first
     result = _try_derived_cbf(asl_dir, out)
     if result:
         return result
-
-    # Fallback: pCASL formula
     return _compute_pcasl_cbf(asl_dir, out)
 
 
