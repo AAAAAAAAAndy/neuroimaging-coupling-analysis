@@ -11,14 +11,25 @@ import subprocess
 from pathlib import Path
 
 # ---- Path configuration ----
+import os
+
 BASE = Path('/mnt/d/project2')
 DATA = BASE / 'data'
 FS_DIR = BASE / 'output' / 'freesurfer'
 
-OUT_ASL = BASE / 'output' / 'baseline_ASL'
-OUT_T1 = BASE / 'output' / 'baseline_T1'
-OUT_FMRI = BASE / 'output' / 'baseline_fMRI'
-OUT_DWI = BASE / 'output' / 'baseline_DWI'
+# Timepoint-specific paths (env-configurable)
+TIMEPOINT = os.environ.get('TIMEPOINT', 'baseline')
+
+OUT_ASL = BASE / 'output' / f'{TIMEPOINT}_ASL'
+OUT_T1 = BASE / 'output' / f'{TIMEPOINT}_T1'
+OUT_FMRI = BASE / 'output' / f'{TIMEPOINT}_fMRI'
+OUT_DWI = BASE / 'output' / f'{TIMEPOINT}_DWI'
+
+# Data source paths
+DATA_ASL = DATA / f'{TIMEPOINT}_ASL'
+DATA_BOLD = DATA / f'{TIMEPOINT}_fMRI'
+DATA_T1 = DATA / f'{TIMEPOINT}_T1'
+DATA_DWI = DATA / f'{TIMEPOINT}_DWI'
 
 # ---- FreeSurfer environment ----
 def setup_freesurfer_env():

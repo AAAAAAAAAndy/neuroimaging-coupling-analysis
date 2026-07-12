@@ -7,7 +7,7 @@ import numpy as np
 import nibabel as nib
 import pydicom
 from pathlib import Path
-from preprocess import OUT_ASL, DATA, is_step_done, ensure_dir
+from preprocess import OUT_ASL, DATA_ASL, is_step_done, ensure_dir
 
 logger = logging.getLogger('preprocess.asl')
 
@@ -23,7 +23,7 @@ def asl_to_cbf(subject_id):
         return str(out)
     ensure_dir(out.parent)
 
-    asl_dir = DATA / 'baseline_ASL' / subject_id
+    asl_dir = DATA_ASL / subject_id
     if not asl_dir.exists():
         return None
 

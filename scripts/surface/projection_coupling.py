@@ -9,6 +9,7 @@ import time
 import numpy as np
 import nibabel as nib
 from pathlib import Path
+from scipy.spatial import cKDTree
 
 # Ensure scripts/ is on path for cross-package imports
 _scripts_dir = str(Path(__file__).resolve().parent.parent)
@@ -16,7 +17,7 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 from preprocess import (
-    OUT_T1, OUT_FMRI, FS_DIR, is_step_done, ensure_dir,
+    OUT_T1, OUT_FMRI, OUT_DWI, FS_DIR, is_step_done, ensure_dir,
     setup_freesurfer_env, run_cmd
 )
 

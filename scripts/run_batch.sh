@@ -16,16 +16,26 @@
 set -euo pipefail
 
 BASE=/mnt/d/project2
-DATA=$BASE/data
-FS_DIR=$BASE/output/freesurfer
 MIND=/home/sad/miniconda3/envs/mind/bin/python
-LOG_DIR=$BASE/output/batch_logs
 MAX_PARALLEL=6
 MAX_RECON=4
 
-OUT_ASL=$BASE/output/baseline_ASL
-OUT_T1=$BASE/output/baseline_T1
-OUT_FMRI=$BASE/output/baseline_fMRI
+# ---- Timepoint: baseline or visit ----
+TIMEPOINT="${TIMEPOINT:-baseline}"
+DATA=$BASE/data
+FS_DIR=$BASE/output/freesurfer
+LOG_DIR=$BASE/output/batch_logs
+
+# Modality-specific data/data prefixes
+ASL_PREFIX=${TIMEPOINT}_ASL
+BOLD_PREFIX=${TIMEPOINT}_fMRI
+T1_PREFIX=${TIMEPOINT}_T1
+DWI_PREFIX=${TIMEPOINT}_DWI
+
+OUT_ASL=$BASE/output/${TIMEPOINT}_ASL
+OUT_T1=$BASE/output/${TIMEPOINT}_T1
+OUT_FMRI=$BASE/output/${TIMEPOINT}_fMRI
+OUT_DWI=$BASE/output/${TIMEPOINT}_DWI
 
 export FREESURFER_HOME=/usr/local/freesurfer
 export FS_LICENSE=$FREESURFER_HOME/license.txt
@@ -55,10 +65,10 @@ trap cleanup SIGINT SIGTERM
 # ---- 受试者列表 ----
 get_subjects() {
     comm -12 \
-        <(ls "$DATA/baseline_ASL" | grep -E "^(B1_|A1_|sub)" | sort) \
+        <(ls "$DATA/$ASL_PREFIX" | grep -E "^(B1_|A1_|sub)" | sort) \
         <(comm -12 \
-            <(ls "$DATA/baseline_fMRI" | grep -E "^(B1_|A1_|sub)" | sort) \
-            <(ls "$DATA/baseline_T1" | grep -E "^(B1_|A1_|sub)" | sort))
+            <(ls "$DATA/$BOLD_PREFIX" | grep -E "^(B1_|A1_|sub)" | sort) \
+            <(ls "$DATA/$T1_PREFIX" | grep -E "^(B1_|A1_|sub)" | sort))
 }
 
 # ---- 步骤状态检查 ----

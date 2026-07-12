@@ -10,7 +10,7 @@ import numpy as np
 import nibabel as nib
 from pathlib import Path
 from preprocess import (
-    OUT_T1, DATA, FS_DIR, is_step_done, ensure_dir,
+    OUT_T1, DATA_T1, FS_DIR, is_step_done, ensure_dir,
     setup_freesurfer_env, run_cmd
 )
 
@@ -24,7 +24,7 @@ def t1_to_nifti(subject_id):
         return str(out)
     ensure_dir(out.parent)
 
-    src = DATA / 'baseline_T1' / subject_id
+    src = DATA_T1 / subject_id
     if not src.exists():
         return None
 

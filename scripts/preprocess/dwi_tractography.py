@@ -17,7 +17,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger('DWI_2016')
 
-from preprocess import BASE, DATA, FS_DIR, OUT_DWI as OUT
+from preprocess import BASE, DATA_DWI, FS_DIR, OUT_DWI as OUT
 
 
 def run_cmd(cmd, timeout=3600, cwd=None):
@@ -38,7 +38,7 @@ def run_cmd(cmd, timeout=3600, cwd=None):
 
 def dwi_dicom_to_mif(subject_id):
     """Convert DWI DICOM to MRtrix3 .mif format."""
-    dwi_dir = DATA / 'baseline_DWI' / subject_id
+    dwi_dir = DATA_DWI / subject_id
     out_dir = OUT / subject_id
     out_dir.mkdir(parents=True, exist_ok=True)
 

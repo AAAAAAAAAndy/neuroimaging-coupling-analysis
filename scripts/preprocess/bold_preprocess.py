@@ -18,7 +18,7 @@ from scipy import signal
 from scipy.ndimage import binary_erosion
 from pathlib import Path
 from preprocess import (
-    OUT_FMRI, DATA, FS_DIR, is_step_done, ensure_dir,
+    OUT_FMRI, DATA_BOLD, FS_DIR, is_step_done, ensure_dir,
     setup_freesurfer_env, run_cmd
 )
 
@@ -32,7 +32,7 @@ def bold_to_nifti(subject_id):
         return str(out)
     ensure_dir(out.parent)
 
-    src = DATA / 'baseline_fMRI' / subject_id
+    src = DATA_BOLD / subject_id
     if not src.exists():
         return None
 
@@ -314,6 +314,39 @@ def bold_to_alff(subject_id, bold_path):
     """Full BOLD preprocessing pipeline → ALFF."""
     alff_path = OUT_FMRI / subject_id / f'{subject_id}_ALFF.nii.gz'
     if is_step_done(alff_path):
+        return str(alff_path)
+
+    # Motion correction
+    mc_path = motion_correct(subject_id, bold_path)
+
+    # Despike
+    mc_path = despike(mc_path)
+
+    # Brain mask + segmentation
+    masks = brain_mask_and_seg(subject_id, mc_path)
+
+    # Load data
+    if masks and 'brain' in masks:
+        data = nib.load(masks['brain']).get_fdata().astype(np.float32)
+    else:
+        data = nib.load(mc_path).get_fdata().astype(np.float32)
+
+    # Confound regression
+    motion_file = str(Path(mc_path).parent / '_motion_params.npy')
+    data_clean = confound_regression(data, masks, motion_file)
+
+    # Bandpass filter
+    data_filt = bandpass(data_clean)
+
+    # Save preprocessed BOLD
+    affine = nib.load(mc_path).affine
+    preproc_path = OUT_FMRI / subject_id / f'{subject_id}_BOLD_preproc.nii.gz'
+    nib.save(nib.Nifti1Image(data_filt, affine), str(preproc_path))
+
+    # Compute ALFF
+    alff = compute_alff(data_filt)
+    nib.save(nib.Nifti1Image(alff, affine), str(alff_path))
+    logger.info(f'ALFF: mean={alff.mean():.2f}')
     return str(alff_path)
 
 
@@ -326,7 +359,7 @@ def bold_to_fc(subject_id, bold_path, n_regions=114):
     from scipy import stats
 
     img = nib.load(bold_path)
-    data = img.getfdata().astype(np.float32)
+    data = img.get_fdata().astype(np.float32)
     if data.ndim != 4:
         return None
 
@@ -344,7 +377,7 @@ def bold_to_fc(subject_id, bold_path, n_regions=114):
         return None
 
     parc_img = nib.load(str(parc_file))
-    parc_data = parc_img.getfdata().astype(int)
+    parc_data = parc_img.get_fdata().astype(int)
 
     # Resample parcellation to BOLD space
     bold_affine = img.affine
@@ -389,36 +422,3 @@ def bold_to_fc(subject_id, bold_path, n_regions=114):
     np.save(str(out_dir / 'FC_matrix.npy'), fc_matrix)
     logger.info(f'FC matrix: {fc_matrix.shape}')
     return fc_matrix
-
-    # Motion correction
-    mc_path = motion_correct(subject_id, bold_path)
-
-    # Despike
-    mc_path = despike(mc_path)
-
-    # Brain mask + segmentation
-    masks = brain_mask_and_seg(subject_id, mc_path)
-
-    # Load data
-    if masks and 'brain' in masks:
-        data = nib.load(masks['brain']).get_fdata().astype(np.float32)
-    else:
-        data = nib.load(mc_path).get_fdata().astype(np.float32)
-
-    # Confound regression
-    motion_file = str(Path(mc_path).parent / '_motion_params.npy')
-    data_clean = confound_regression(data, masks, motion_file)
-
-    # Bandpass filter
-    data_filt = bandpass(data_clean)
-
-    # Save preprocessed BOLD
-    affine = nib.load(mc_path).affine
-    preproc_path = OUT_FMRI / subject_id / f'{subject_id}_BOLD_preproc.nii.gz'
-    nib.save(nib.Nifti1Image(data_filt, affine), str(preproc_path))
-
-    # Compute ALFF
-    alff = compute_alff(data_filt)
-    nib.save(nib.Nifti1Image(alff, affine), str(alff_path))
-    logger.info(f'ALFF: mean={alff.mean():.2f}')
-    return str(alff_path)
