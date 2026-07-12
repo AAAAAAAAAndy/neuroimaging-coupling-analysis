@@ -7,43 +7,43 @@ import numpy as np
 import nibabel as nib
 import pydicom
 from pathlib import Path
-from preprocess import OUT_ASL, DATA_ASL, DATA, TIMEPOINT, is_step_done, ensure_dir
+from preprocess import BASE, OUT_ASL, DATA_ASL, DATA, TIMEPOINT, is_step_done, ensure_dir
 
 logger = logging.getLogger('preprocess.asl')
 
 
 def _find_asl_dir(subject_id):
-    """Find ASL DICOM directory across standard and special locations."""
+    """Find ASL DICOM directory across standard and special locations.
+    Returns (path, mode) where mode is 'standard' or 'special'.
+    Prefers ASL_3D_tra_M0 over ASL_3D_tra_iso.
+    """
     # Standard location
     standard = DATA_ASL / subject_id
     if standard.exists():
-        return standard
+        return standard, 'standard'
 
-    # ASL_special: check subdirectories
+    # ASL_special: prefer M0 over iso
     special_dir = DATA / f'{TIMEPOINT}_ASL_special'
     if special_dir.exists():
-        for subdir in special_dir.iterdir():
-            if subdir.is_dir():
-                candidate = subdir / subject_id
-                if candidate.exists():
-                    return candidate
-    return None
+        # Prefer M0 subdirectory
+        for name in ['ASL_3D_tra_M0', 'ASL_3D_tra_iso']:
+            candidate = special_dir / name / subject_id
+            if candidate.exists():
+                return candidate, 'special'
+    return None, None
 
 
 def asl_to_cbf(subject_id):
     """
     Convert ASL DICOM to CBF NIfTI.
-    Strategy: prefer DERIVED perfusion images (scanner-computed CBF).
-    Fallback: compute CBF from control-label pairs using pCASL formula.
+    Handles both standard (DERIVED/pCASL) and special mosaic formats.
     Output path mirrors data directory structure.
     """
-    # Find source ASL directory
-    asl_dir = _find_asl_dir(subject_id)
-    if not asl_dir or not asl_dir.exists():
+    asl_dir, mode = _find_asl_dir(subject_id)
+    if not asl_dir:
         return None
 
-    # Compute output path mirroring data structure
-    # e.g., data/baseline_ASL_special/ASL_3D_tra_M0/A1_0460/ → output/baseline_ASL_special/ASL_3D_tra_M0/A1_0460/
+    # Output path mirrors data structure
     rel_path = asl_dir.relative_to(DATA)
     out_dir = BASE / 'output' / rel_path
     out = out_dir / f'{subject_id}_CBF.nii.gz'
@@ -51,7 +51,12 @@ def asl_to_cbf(subject_id):
         return str(out)
     ensure_dir(out_dir)
 
-    # Try DERIVED images first
+    # ASL_special: mosaic format → special handler
+    if mode == 'special':
+        from preprocess.asl_special import asl_special_to_cbf
+        return asl_special_to_cbf(subject_id, asl_dir, out)
+
+    # Standard: try DERIVED images first
     result = _try_derived_cbf(asl_dir, out)
     if result:
         return result
