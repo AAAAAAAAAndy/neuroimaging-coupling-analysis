@@ -237,7 +237,7 @@ show_status() {
         is_recon_complete "$subj" && recon_done=$((recon_done + 1))
     done < <(get_subjects)
 
-    recon_running=$(pgrep -f "recon-all" 2>/dev/null | wc -l)
+    recon_running=$(pgrep -f "recon-all -subjid" 2>/dev/null | wc -l)
     local running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
 
     echo "=============================="
@@ -329,7 +329,7 @@ main() {
         done
 
         # Launch recon-all jobs (up to MAX_RECON) for subjects that need it
-        local recon_running=$(pgrep -f "recon-all" 2>/dev/null | wc -l)
+        local recon_running=$(pgrep -f "recon-all -subjid" 2>/dev/null | wc -l)
         for subj in "${queue[@]}"; do
             [ $recon_running -ge $MAX_RECON ] && break
             is_recon_complete "$subj" && continue
@@ -364,14 +364,14 @@ main() {
             is_complete "$subj" && done=$((done+1))
         done
 
-        local recon_r=$(pgrep -f "recon-all" 2>/dev/null | wc -l)
+        local recon_r=$(pgrep -f "recon-all -subjid" 2>/dev/null | wc -l)
         local proc_r=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
         echo "[$(date '+%H:%M:%S')] 进度: $done/$qtotal done | recon-all: $recon_r | proc: $proc_r"
     done
 
     echo ""
     echo "=== 等待剩余 recon-all ==="
-    while pgrep -f "recon-all" >/dev/null 2>&1; do
+    while pgrep -f "recon-all -subjid" >/dev/null 2>&1; do
         sleep 30
     done
 
