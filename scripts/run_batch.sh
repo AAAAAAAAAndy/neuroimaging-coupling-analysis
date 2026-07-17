@@ -104,8 +104,26 @@ is_complete() {
     step_done "$subj" step_3 && \
     step_done "$subj" step_4 && \
     step_done "$subj" step_5_9 && \
-    step_done "$subj" step_10 && \
     step_done "$subj" step_11
+}
+
+# ---- Check if subject has already been processed (any step done) ----
+has_any_output() {
+    local subj=$1
+    step_done "$subj" step_1 || \
+    step_done "$subj" step_2 || \
+    step_done "$subj" step_3 || \
+    step_done "$subj" step_4 || \
+    step_done "$subj" step_5_9 || \
+    step_done "$subj" step_11 || \
+    step_done "$subj" step_12a || \
+    step_done "$subj" step_12d
+}
+
+# ---- Check if subject is currently being processed ----
+is_processing() {
+    local subj=$1
+    pgrep -f "process_one.py.*$subj" >/dev/null 2>&1
 }
 
 is_recon_complete() {
@@ -134,16 +152,25 @@ process_subject() {
 
     echo "[$(date '+%H:%M:%S')] [START] $subj" >> "$logfile"
 
-    # 确保 T1 NIfTI 存在
-    ensure_t1_nifti "$subj" || { echo "NO T1" >> "$logfile"; return 1; }
+    # Check if T1 data exists
+    local t1_src="$DATA/$T1_PREFIX/$subj"
+    if [ -d "$t1_src" ]; then
+        # Ensure T1 NIfTI exists
+        ensure_t1_nifti "$subj" || { echo "NO_T1_NIFTI" >> "$logfile"; }
 
-    # 等待 recon-all 完成（需要 FS 表面做 surface projection）
-    echo "[$(date '+%H:%M:%S')] [wait] 等待 recon-all..." >> "$logfile"
-    while ! is_recon_complete "$subj"; do
-        sleep 30
-    done
+        # Wait for recon-all if needed (only if T1 NIfTI was created)
+        local t1="$OUT_T1/$subj/${subj}_T1.nii.gz"
+        if [ -f "$t1" ]; then
+            echo "[$(date '+%H:%M:%S')] [wait] 等待 recon-all..." >> "$logfile"
+            while ! is_recon_complete "$subj"; do
+                sleep 30
+            done
+        fi
+    else
+        echo "[$(date '+%H:%M:%S')] [NO_T1] $subj has no T1 data" >> "$logfile"
+    fi
 
-    # 运行主管道
+    # Run main pipeline
     "$MIND" "$BASE/scripts/process_one.py" --subject "$subj" >> "$logfile" 2>&1
     local rc=$?
 
@@ -269,24 +296,54 @@ main() {
     local qtotal=${#queue[@]}
     echo "待处理: $qtotal 个被试"
 
-    local idx=0
     local done=0
-    # ProcessId → Subject mapping for process_one jobs
     declare -A PO_SUBJ
 
     while [ $done -lt $qtotal ]; do
-        # 1. Launch recon-all jobs (up to MAX_RECON) for subjects that need it
-        local recon_running=$(pgrep -c "recon-all" 2>/dev/null || echo 0)
-        local i=$idx
-        while [ $i -lt $qtotal ] && [ $recon_running -lt $MAX_RECON ]; do
-            local subj="${queue[$i]}"
-            is_recon_complete "$subj" && { i=$((i+1)); continue; }
+        done=0
+        local need_proc=()
+
+        # Evaluate each subject in queue
+        for subj in "${queue[@]}"; do
+            is_complete "$subj" && { done=$((done+1)); continue; }
+
+            # If already running process_one, skip
+            pgrep -f "process_one.py.*$subj" >/dev/null 2>&1 && continue
+
+            # If recon-complete or no-T1, can start process_one
+            local t1_src="$DATA/$T1_PREFIX/$subj"
+            if is_recon_complete "$subj" || [ ! -d "$t1_src" ]; then
+                need_proc+=("$subj")
+            fi
+        done
+
+        # Launch process_one jobs (up to MAX_PARALLEL)
+        local po_running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
+        for subj in "${need_proc[@]}"; do
+            [ $po_running -ge $MAX_PARALLEL ] && break
+            echo "[$(date '+%H:%M:%S')] [PROC] $subj"
+            process_subject "$subj" >> "$LOG_DIR/${subj}.log" 2>&1 &
+            CHILD_PIDS+=($!)
+            PO_SUBJ[$!]="$subj"
+            po_running=$((po_running+1))
+        done
+
+        # Launch recon-all jobs (up to MAX_RECON) for subjects that need it
+        local recon_running=$(pgrep -f "recon-all" 2>/dev/null | wc -l)
+        for subj in "${queue[@]}"; do
+            [ $recon_running -ge $MAX_RECON ] && break
+            is_recon_complete "$subj" && continue
+            is_complete "$subj" && continue
+
+            # Skip if no T1 data
+            local t1_src2="$DATA/$T1_PREFIX/$subj"
+            [ ! -d "$t1_src2" ] && continue
 
             # Ensure T1 NIfTI exists
-            ensure_t1_nifti "$subj" || { echo "[$i/$qtotal] NO_T1 $subj"; i=$((i+1)); continue; }
+            ensure_t1_nifti "$subj" || continue
 
             local t1="$OUT_T1/$subj/${subj}_T1.nii.gz"
-            [ ! -f "$t1" ] && { i=$((i+1)); continue; }
+            [ ! -f "$t1" ] && continue
 
             # Clean incomplete directories
             [ -d "$FS_DIR/$subj" ] && [ ! -f "$FS_DIR/$subj/surf/lh.sphere.reg" ] && \
@@ -296,25 +353,9 @@ main() {
                 -all -openmp 4 > "$FS_DIR/${subj}_recon.log" 2>&1 &
             echo "[$(date '+%H:%M:%S')] [RECON] $subj"
             recon_running=$((recon_running+1))
-            i=$((i+1))
         done
 
-        # 2. Launch process_one jobs (up to MAX_PARALLEL) for subjects with recon-all done
-        local po_running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
-        for subj in "${queue[@]}"; do
-            [ $po_running -ge $MAX_PARALLEL ] && break
-            is_complete "$subj" && continue
-            is_recon_complete "$subj" || continue
-            pgrep -f "process_one.py.*$subj" >/dev/null 2>&1 && continue
-
-            echo "[$(date '+%H:%M:%S')] [PROC] $subj"
-            process_subject "$subj" >> "$LOG_DIR/${subj}.log" 2>&1 &
-            CHILD_PIDS+=($!)
-            PO_SUBJ[$!]="$subj"
-            po_running=$((po_running+1))
-        done
-
-        # 3. Wait briefly and check progress
+        # Wait briefly
         sleep 60
 
         # Count completed
@@ -323,9 +364,15 @@ main() {
             is_complete "$subj" && done=$((done+1))
         done
 
-        local recon_r=$(pgrep -c "recon-all" 2>/dev/null || echo 0)
+        local recon_r=$(pgrep -f "recon-all" 2>/dev/null | wc -l)
         local proc_r=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
         echo "[$(date '+%H:%M:%S')] 进度: $done/$qtotal done | recon-all: $recon_r | proc: $proc_r"
+    done
+
+    echo ""
+    echo "=== 等待剩余 recon-all ==="
+    while pgrep -f "recon-all" >/dev/null 2>&1; do
+        sleep 30
     done
 
     echo "=== 预处理完成 ==="
