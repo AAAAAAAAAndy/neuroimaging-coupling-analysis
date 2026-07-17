@@ -39,7 +39,7 @@ def bold_to_nifti(subject_id):
     run_cmd(['dcm2niix', '-z', 'y', '-f', f'{subject_id}_BOLD',
              '-4', 'y', '-w', '0', '-o', str(out.parent),
              '-p', 'n', '-v', '0', str(src)],
-            timeout=600)
+            timeout=1800)  # 30 min for large BOLD (~9000 DICOMs)
 
     if out.exists():
         logger.info(f'BOLD: {out.stat().st_size / 1e6:.0f}MB')

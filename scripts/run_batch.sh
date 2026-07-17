@@ -249,36 +249,7 @@ show_status() {
     done < <(get_subjects)
 }
 
-# ---- 启动所有 recon-all（在需要处理前）----
-start_all_recon() {
-    local subjects=$(get_subjects)
-    local total=$(echo "$subjects" | wc -l)
-    local count=0
-
-    for subj in $subjects; do
-        count=$((count+1))
-        is_recon_complete "$subj" && continue
-        ensure_t1_nifti "$subj" || continue
-
-        # 等待槽位
-        while [ $(pgrep -c "recon-all" 2>/dev/null || echo 0) -ge $MAX_RECON ]; do
-            sleep 15
-        done
-
-        local t1="$OUT_T1/$subj/${subj}_T1.nii.gz"
-        [ ! -f "$t1" ] && continue
-
-        # 清理不完整的目录
-        [ -d "$FS_DIR/$subj" ] && [ ! -f "$FS_DIR/$subj/surf/lh.sphere.reg" ] && \
-            rm -rf "$FS_DIR/$subj"
-
-        echo "[$count/$total] RECON $subj"
-        nohup recon-all -subjid "$subj" -i "$t1" -sd "$FS_DIR" \
-            -all -openmp 4 > "$FS_DIR/${subj}_recon.log" 2>&1 &
-    done
-}
-
-# ---- 主循环 ----
+# ---- 主循环（交错模式：recon-all 与处理并行） ----
 main() {
     echo "========================================"
     echo "批量预处理启动 $(date)"
@@ -289,44 +260,75 @@ main() {
     local total=$(echo "$subjects" | wc -l)
     echo "共 $total 个受试者"
 
-    # Phase 1: 启动所有 recon-all
-    echo "=== Phase 1: 启动 recon-all ==="
-    start_all_recon
-
-    # Phase 2: 逐个处理（内部等待各自的 recon-all）
-    echo "=== Phase 2: 逐个处理 ==="
-    local count=0
+    # Build queue: subjects that need processing
+    local queue=()
     for subj in $subjects; do
-        count=$((count+1))
+        is_complete "$subj" && continue
+        queue+=("$subj")
+    done
+    local qtotal=${#queue[@]}
+    echo "待处理: $qtotal 个被试"
 
-        if is_complete "$subj"; then
-            echo "[$count/$total] SKIP $subj (complete)"
-            continue
-        fi
+    local idx=0
+    local done=0
+    # ProcessId → Subject mapping for process_one jobs
+    declare -A PO_SUBJ
 
-        # 等待槽位
-        while true; do
-            local running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
-            [ "$running" -lt "$MAX_PARALLEL" ] && break
-            sleep 10
+    while [ $done -lt $qtotal ]; do
+        # 1. Launch recon-all jobs (up to MAX_RECON) for subjects that need it
+        local recon_running=$(pgrep -c "recon-all" 2>/dev/null || echo 0)
+        local i=$idx
+        while [ $i -lt $qtotal ] && [ $recon_running -lt $MAX_RECON ]; do
+            local subj="${queue[$i]}"
+            is_recon_complete "$subj" && { i=$((i+1)); continue; }
+
+            # Ensure T1 NIfTI exists
+            ensure_t1_nifti "$subj" || { echo "[$i/$qtotal] NO_T1 $subj"; i=$((i+1)); continue; }
+
+            local t1="$OUT_T1/$subj/${subj}_T1.nii.gz"
+            [ ! -f "$t1" ] && { i=$((i+1)); continue; }
+
+            # Clean incomplete directories
+            [ -d "$FS_DIR/$subj" ] && [ ! -f "$FS_DIR/$subj/surf/lh.sphere.reg" ] && \
+                rm -rf "$FS_DIR/$subj"
+
+            nohup recon-all -subjid "$subj" -i "$t1" -sd "$FS_DIR" \
+                -all -openmp 4 > "$FS_DIR/${subj}_recon.log" 2>&1 &
+            echo "[$(date '+%H:%M:%S')] [RECON] $subj"
+            recon_running=$((recon_running+1))
+            i=$((i+1))
         done
 
-        echo "[$count/$total] START $subj"
-        process_subject "$subj" >> "$LOG_DIR/${subj}.log" 2>&1 &
-        CHILD_PIDS+=($!)
+        # 2. Launch process_one jobs (up to MAX_PARALLEL) for subjects with recon-all done
+        local po_running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
+        for subj in "${queue[@]}"; do
+            [ $po_running -ge $MAX_PARALLEL ] && break
+            is_complete "$subj" && continue
+            is_recon_complete "$subj" || continue
+            pgrep -f "process_one.py.*$subj" >/dev/null 2>&1 && continue
+
+            echo "[$(date '+%H:%M:%S')] [PROC] $subj"
+            process_subject "$subj" >> "$LOG_DIR/${subj}.log" 2>&1 &
+            CHILD_PIDS+=($!)
+            PO_SUBJ[$!]="$subj"
+            po_running=$((po_running+1))
+        done
+
+        # 3. Wait briefly and check progress
+        sleep 60
+
+        # Count completed
+        done=0
+        for subj in "${queue[@]}"; do
+            is_complete "$subj" && done=$((done+1))
+        done
+
+        local recon_r=$(pgrep -c "recon-all" 2>/dev/null || echo 0)
+        local proc_r=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
+        echo "[$(date '+%H:%M:%S')] 进度: $done/$qtotal done | recon-all: $recon_r | proc: $proc_r"
     done
 
-    echo ""
-    echo "=== 所有受试者已启动，等待完成 ==="
-    wait
     echo "=== 预处理完成 ==="
-
-    echo "等待剩余 recon-all..."
-    while pgrep -f "recon-all" >/dev/null 2>&1; do
-        sleep 30
-        echo "[$(date '+%H:%M:%S')] recon-all 剩余: $(pgrep -f recon-all 2>/dev/null | wc -l)"
-    done
-    echo "=== 全部完成 ==="
     show_status
 }
 
