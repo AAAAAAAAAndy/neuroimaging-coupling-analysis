@@ -123,7 +123,7 @@ has_any_output() {
 # ---- Check if subject is currently being processed ----
 is_processing() {
     local subj=$1
-    pgrep -f "process_one.py.*$subj" >/dev/null 2>&1
+    ps -eo pid,args | grep -q "[p]rocess_one.py.*$subj"
 }
 
 is_recon_complete() {
@@ -237,8 +237,8 @@ show_status() {
         is_recon_complete "$subj" && recon_done=$((recon_done + 1))
     done < <(get_subjects)
 
-    recon_running=$(pgrep -f "bin/recon-all" 2>/dev/null | wc -l)
-    local running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
+    recon_running=$(ps -eo pid,args | grep "[b]in/recon-all" | wc -l)
+    local running=$(ps -eo pid,args | grep "[p]rocess_one.py" | wc -l)
 
     echo "=============================="
     echo "进度报告 $(date '+%Y-%m-%d %H:%M:%S')"
@@ -266,11 +266,11 @@ show_status() {
             p2022="✅"
         elif [ -f "$LOG_DIR/${subj}.log" ] && grep -q "\[FAIL\]" "$LOG_DIR/${subj}.log" 2>/dev/null; then
             p2022="❌"
-        elif pgrep -f "process_one.py.*$subj" >/dev/null 2>&1; then
+        elif ps -eo pid,args | grep -q "[p]rocess_one.py.*$subj"; then
             p2022="🔄"
         fi
         is_recon_complete "$subj" && fs_status="✅" || {
-            pgrep -f "recon-all.*$subj" >/dev/null 2>&1 && fs_status="🔄"
+            ps -eo pid,args | grep -q "[r]econ-all.*$subj" && fs_status="🔄"
         }
         printf "  %-12s 预处理:%-2s  FreeSurfer:%-2s\n" "$subj" "$p2022" "$fs_status"
     done < <(get_subjects)
@@ -308,7 +308,7 @@ main() {
             is_complete "$subj" && { done=$((done+1)); continue; }
 
             # If already running process_one, skip
-            pgrep -f "process_one.py.*$subj" >/dev/null 2>&1 && continue
+            ps -eo pid,args | grep -q "[p]rocess_one.py.*$subj" && continue
 
             # If recon-complete or no-T1, can start process_one
             local t1_src="$DATA/$T1_PREFIX/$subj"
@@ -318,7 +318,7 @@ main() {
         done
 
         # Launch process_one jobs (up to MAX_PARALLEL)
-        local po_running=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
+        local po_running=$(ps -eo pid,args | grep "[p]rocess_one.py" | wc -l)
         for subj in "${need_proc[@]}"; do
             [ $po_running -ge $MAX_PARALLEL ] && break
             echo "[$(date '+%H:%M:%S')] [PROC] $subj"
@@ -329,7 +329,7 @@ main() {
         done
 
         # Launch recon-all jobs (up to MAX_RECON) for subjects that need it
-        local recon_running=$(pgrep -f "bin/recon-all" 2>/dev/null | wc -l)
+        local recon_running=$(ps -eo pid,args | grep "[b]in/recon-all" | wc -l)
         for subj in "${queue[@]}"; do
             [ $recon_running -ge $MAX_RECON ] && break
             is_recon_complete "$subj" && continue
@@ -364,14 +364,14 @@ main() {
             is_complete "$subj" && done=$((done+1))
         done
 
-        local recon_r=$(pgrep -f "bin/recon-all" 2>/dev/null | wc -l)
-        local proc_r=$(pgrep -f "process_one.py" 2>/dev/null | wc -l)
+        local recon_r=$(ps -eo pid,args | grep "[b]in/recon-all" | wc -l)
+        local proc_r=$(ps -eo pid,args | grep "[p]rocess_one.py" | wc -l)
         echo "[$(date '+%H:%M:%S')] 进度: $done/$qtotal done | recon-all: $recon_r | proc: $proc_r"
     done
 
     echo ""
     echo "=== 等待剩余 recon-all ==="
-    while pgrep -f "bin/recon-all" >/dev/null 2>&1; do
+    while ps -eo pid,args | grep -q "[b]in/recon-all"; do
         sleep 30
     done
 
