@@ -18,7 +18,7 @@ set -euo pipefail
 BASE=/mnt/d/project2
 MIND=/home/sad/miniconda3/envs/mind/bin/python
 MAX_PARALLEL=6
-MAX_RECON=4
+MAX_RECON=2
 
 # ---- Timepoint: baseline or visit ----
 TIMEPOINT="${TIMEPOINT:-baseline}"
