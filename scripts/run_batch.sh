@@ -64,35 +64,48 @@ trap cleanup SIGINT SIGTERM
 
 # ---- 受试者列表（所有模态并集）----
 get_subjects() {
-    # Collect all unique subject IDs from all modality directories
-    # Handles: baseline_ASL/, baseline_ASL_special/*/, visit_*/
+    # Collect all unique subject IDs from ALL timepoints
     {
-        # Standard baseline modalities
-        ls "$DATA/${TIMEPOINT}_ASL" 2>/dev/null
-        ls "$DATA/${TIMEPOINT}_fMRI" 2>/dev/null
-        ls "$DATA/${TIMEPOINT}_T1" 2>/dev/null
-        ls "$DATA/${TIMEPOINT}_DWI" 2>/dev/null
-
-        # ASL_special: deeper nesting (e.g., ASL_3D_tra_M0/A1_0460/)
-        if [ -d "$DATA/${TIMEPOINT}_ASL_special" ]; then
-            for subdir in "$DATA/${TIMEPOINT}_ASL_special"/*/; do
+        # Baseline timepoint
+        ls "$DATA/baseline_ASL" 2>/dev/null
+        ls "$DATA/baseline_fMRI" 2>/dev/null
+        ls "$DATA/baseline_T1" 2>/dev/null
+        ls "$DATA/baseline_DWI" 2>/dev/null
+        if [ -d "$DATA/baseline_ASL_special" ]; then
+            for subdir in "$DATA/baseline_ASL_special"/*/; do
                 ls "$subdir" 2>/dev/null
             done
         fi
+
+        # Visit timepoint
+        ls "$DATA/visit_ASL" 2>/dev/null
+        ls "$DATA/visit_fMRI" 2>/dev/null
+        ls "$DATA/visit_T1" 2>/dev/null
+        ls "$DATA/visit_DWI" 2>/dev/null
     } | grep -E "^(B1_|A1_|sub)" | sort -u
 }
 
-# ---- 步骤状态检查 ----
+# ---- 步骤状态检查（自动检测 timepoint） ----
 step_done() {
     local subj=$1 step=$2
+    # Detect timepoint from subject ID
+    local tp="baseline"
+    [[ "$subj" == sub* ]] && tp="visit"
+    local out_asl="$BASE/output/${tp}_ASL"
+    local out_t1="$BASE/output/${tp}_T1"
+    local out_fmri="$BASE/output/${tp}_fMRI"
+
     case "$step" in
-        step_1)   [ -f "$OUT_ASL/$subj/${subj}_CBF.nii.gz" ] ;;
-        step_2)   [ -f "$OUT_T1/$subj/${subj}_T1.nii.gz" ] ;;
+        step_1)   [ -f "$out_asl/$subj/${subj}_CBF.nii.gz" ] ;;
+        step_2)   [ -f "$out_t1/$subj/${subj}_T1.nii.gz" ] ;;
         step_3)   [ -f "$FS_DIR/$subj/surf/lh.sphere.reg" ] ;;
-        step_4)   [ -f "$OUT_FMRI/$subj/${subj}_BOLD.nii.gz" ] ;;
-        step_5_9) [ -f "$OUT_FMRI/$subj/${subj}_ALFF.nii.gz" ] ;;
-        step_10)  [ -f "$OUT_T1/$subj/surface/fsaverage5_${subj}_cbf_lh.mgh" ] ;;
-        step_11)  [ -f "$OUT_FMRI/$subj/coupling_lh.npy" ] ;;
+        step_4)   [ -f "$out_fmri/$subj/${subj}_BOLD.nii.gz" ] ;;
+        step_5_9) [ -f "$out_fmri/$subj/${subj}_ALFF.nii.gz" ] ;;
+        step_10)  [ -f "$out_t1/$subj/surface/fsaverage5_${subj}_cbf_lh.mgh" ] ;;
+        step_11)  [ -f "$out_fmri/$subj/coupling_lh.npy" ] ;;
+        step_12a) [ -f "$BASE/output/${tp}_DWI/$subj/dwi.mif" ] ;;
+        step_12d) [ -f "$BASE/output/${tp}_DWI/$subj/tracks.tck" ] ;;
+        step_12e) [ -f "$BASE/output/${tp}_DWI/${subj}_SC.csv" ] ;;
         *)        return 1 ;;
     esac
 }
@@ -130,17 +143,20 @@ is_recon_complete() {
     [ -f "$FS_DIR/$1/surf/lh.sphere.reg" ]
 }
 
-# ---- 确保 T1 NIfTI 存在 ----
+# ---- 确保 T1 NIfTI 存在（自动检测 timepoint） ----
 ensure_t1_nifti() {
     local subj=$1
-    local t1="$OUT_T1/$subj/${subj}_T1.nii.gz"
+    local tp="baseline"
+    [[ "$subj" == sub* ]] && tp="visit"
+    local out_t1="$BASE/output/${tp}_T1"
+    local t1="$out_t1/$subj/${subj}_T1.nii.gz"
     [ -f "$t1" ] && return 0
 
-    mkdir -p "$OUT_T1/$subj"
-    local src="$DATA/$T1_PREFIX/$subj"
+    mkdir -p "$out_t1/$subj"
+    local src="$DATA/${tp}_T1/$subj"
     [ ! -d "$src" ] && return 1
 
-    dcm2niix -z y -f "${subj}_T1" -o "$OUT_T1/$subj" \
+    dcm2niix -z y -f "${subj}_T1" -o "$out_t1/$subj" \
         -p n -v 0 "$src" 2>/dev/null || true
     [ -f "$t1" ]
 }

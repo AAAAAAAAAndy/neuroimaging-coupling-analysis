@@ -208,6 +208,9 @@ def main():
     subject_id = args.subject
     t0 = time.time()
 
+    from preprocess import set_subject
+    set_subject(subject_id)
+
     ok_2022 = True
     ok_2016 = True
 

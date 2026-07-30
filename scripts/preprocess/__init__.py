@@ -17,19 +17,39 @@ BASE = Path('/mnt/d/project2')
 DATA = BASE / 'data'
 FS_DIR = BASE / 'output' / 'freesurfer'
 
-# Timepoint-specific paths (env-configurable)
-TIMEPOINT = os.environ.get('TIMEPOINT', 'baseline')
+def get_timepoint(subj):
+    """Detect timepoint from subject ID prefix."""
+    if subj.startswith(('B1_', 'A1_')):
+        return 'baseline'
+    elif subj.startswith('sub'):
+        return 'visit'
+    return os.environ.get('TIMEPOINT', 'baseline')
 
-OUT_ASL = BASE / 'output' / f'{TIMEPOINT}_ASL'
-OUT_T1 = BASE / 'output' / f'{TIMEPOINT}_T1'
-OUT_FMRI = BASE / 'output' / f'{TIMEPOINT}_fMRI'
-OUT_DWI = BASE / 'output' / f'{TIMEPOINT}_DWI'
+def set_subject(subj):
+    """Update module-level paths for the given subject (detects timepoint)."""
+    global _current_timepoint, OUT_ASL, OUT_T1, OUT_FMRI, OUT_DWI
+    global DATA_ASL, DATA_BOLD, DATA_T1, DATA_DWI
+    _current_timepoint = get_timepoint(subj)
+    OUT_ASL = BASE / 'output' / f'{_current_timepoint}_ASL'
+    OUT_T1 = BASE / 'output' / f'{_current_timepoint}_T1'
+    OUT_FMRI = BASE / 'output' / f'{_current_timepoint}_fMRI'
+    OUT_DWI = BASE / 'output' / f'{_current_timepoint}_DWI'
+    DATA_ASL = DATA / f'{_current_timepoint}_ASL'
+    DATA_BOLD = DATA / f'{_current_timepoint}_fMRI'
+    DATA_T1 = DATA / f'{_current_timepoint}_T1'
+    DATA_DWI = DATA / f'{_current_timepoint}_DWI'
 
-# Data source paths
-DATA_ASL = DATA / f'{TIMEPOINT}_ASL'
-DATA_BOLD = DATA / f'{TIMEPOINT}_fMRI'
-DATA_T1 = DATA / f'{TIMEPOINT}_T1'
-DATA_DWI = DATA / f'{TIMEPOINT}_DWI'
+# Backward compat
+TIMEPOINT = _current_timepoint
+_current_timepoint = os.environ.get('TIMEPOINT', 'baseline')
+OUT_ASL = BASE / 'output' / f'{_current_timepoint}_ASL'
+OUT_T1 = BASE / 'output' / f'{_current_timepoint}_T1'
+OUT_FMRI = BASE / 'output' / f'{_current_timepoint}_fMRI'
+OUT_DWI = BASE / 'output' / f'{_current_timepoint}_DWI'
+DATA_ASL = DATA / f'{_current_timepoint}_ASL'
+DATA_BOLD = DATA / f'{_current_timepoint}_fMRI'
+DATA_T1 = DATA / f'{_current_timepoint}_T1'
+DATA_DWI = DATA / f'{_current_timepoint}_DWI'
 
 # ---- FreeSurfer environment ----
 def setup_freesurfer_env():
