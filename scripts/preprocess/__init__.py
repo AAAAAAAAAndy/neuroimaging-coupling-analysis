@@ -26,7 +26,12 @@ def get_timepoint(subj):
     return os.environ.get('TIMEPOINT', 'baseline')
 
 def set_subject(subj):
-    """Update module-level paths for the given subject (detects timepoint)."""
+    """Update module-level paths for the given subject (detects timepoint).
+
+    Updates globals in preprocess AND its submodules (bold_preprocess,
+    t1_preprocess, asl_to_cbf, dwi_tractography, surface.projection_coupling)
+    so path lookups reflect the current subject's timepoint.
+    """
     global _current_timepoint, OUT_ASL, OUT_T1, OUT_FMRI, OUT_DWI
     global DATA_ASL, DATA_BOLD, DATA_T1, DATA_DWI
     _current_timepoint = get_timepoint(subj)
@@ -39,8 +44,22 @@ def set_subject(subj):
     DATA_T1 = DATA / f'{_current_timepoint}_T1'
     DATA_DWI = DATA / f'{_current_timepoint}_DWI'
 
-# Backward compat
-TIMEPOINT = _current_timepoint
+    # Propagate to already-imported submodules so their `from preprocess
+    # import OUT_*` bindings stay in sync.
+    import sys
+    updates = {
+        'OUT_ASL': OUT_ASL, 'OUT_T1': OUT_T1,
+        'OUT_FMRI': OUT_FMRI, 'OUT_DWI': OUT_DWI,
+        'DATA_ASL': DATA_ASL, 'DATA_BOLD': DATA_BOLD,
+        'DATA_T1': DATA_T1, 'DATA_DWI': DATA_DWI,
+        'TIMEPOINT': _current_timepoint,
+    }
+    for modname in list(sys.modules):
+        if modname.startswith('preprocess') or modname.startswith('surface'):
+            mod = sys.modules[modname]
+            for k, v in updates.items():
+                setattr(mod, k, v)
+
 _current_timepoint = os.environ.get('TIMEPOINT', 'baseline')
 OUT_ASL = BASE / 'output' / f'{_current_timepoint}_ASL'
 OUT_T1 = BASE / 'output' / f'{_current_timepoint}_T1'
@@ -50,6 +69,9 @@ DATA_ASL = DATA / f'{_current_timepoint}_ASL'
 DATA_BOLD = DATA / f'{_current_timepoint}_fMRI'
 DATA_T1 = DATA / f'{_current_timepoint}_T1'
 DATA_DWI = DATA / f'{_current_timepoint}_DWI'
+
+# Backward compat
+TIMEPOINT = _current_timepoint
 
 # ---- FreeSurfer environment ----
 def setup_freesurfer_env():
