@@ -18,7 +18,7 @@ set -euo pipefail
 BASE=/mnt/d/project2
 MIND=/home/sad/miniconda3/envs/mind/bin/python
 MAX_PARALLEL=6
-MAX_RECON=2
+MAX_RECON=4
 
 # ---- Timepoint: baseline or visit ----
 TIMEPOINT="${TIMEPOINT:-baseline}"
@@ -112,12 +112,52 @@ step_done() {
 
 is_complete() {
     local subj=$1
-    step_done "$subj" step_1 && \
-    step_done "$subj" step_2 && \
-    step_done "$subj" step_3 && \
-    step_done "$subj" step_4 && \
-    step_done "$subj" step_5_9 && \
-    step_done "$subj" step_11
+    # Subjects complete when ALL their AVAILABLE modalities are processed.
+    # A1_XXXX (ASL_special) may only have ASL → complete once CBF exists.
+    local has_asl=1 has_t1=1 has_bold=1
+    [[ "$subj" == A1_* ]] && has_t1=0  # ASL_special: no T1/BOLD guaranteed
+
+    # Modality presence check
+    local tp="baseline"
+    [[ "$subj" == sub* ]] && tp="visit"
+
+    # T1 available?
+    if [ ! -d "$DATA/${tp}_T1/$subj" ] && [ ! -f "$BASE/output/${tp}_T1/$subj/${subj}_T1.nii.gz" ]; then
+        has_t1=0
+    fi
+    # BOLD available?
+    if [ ! -d "$DATA/${tp}_fMRI/$subj" ] && [ ! -f "$BASE/output/${tp}_fMRI/$subj/${subj}_BOLD.nii.gz" ]; then
+        has_bold=0
+    fi
+    # ASL available?
+    if [ ! -d "$DATA/${tp}_ASL/$subj" ] && [ ! -d "$DATA/${tp}_ASL_special" ]; then
+        has_asl=0
+    fi
+
+    local all_done=1
+    # For ASL_special (A1_XXXX): ASL may be nested deeper
+    if [[ "$subj" == A1_* ]]; then
+        # Check if any ASL_special CBF exists
+        local cbf_found=0
+        for sub in "$DATA/${tp}_ASL_special"/*/; do
+            [ -d "$sub/$subj" ] && [ -f "$BASE/output/${tp}_ASL_special/$(basename "$sub")/$subj/${subj}_CBF.nii.gz" ] && cbf_found=1
+        done
+        [ $cbf_found -eq 1 ] || all_done=0
+    elif [ $has_asl -eq 1 ]; then
+        step_done "$subj" step_1 || all_done=0
+    fi
+
+    [ $has_t1 -eq 1 ] && { step_done "$subj" step_2 || all_done=0; }
+    [ $has_t1 -eq 1 ] && { step_done "$subj" step_3 || all_done=0; }
+    [ $has_bold -eq 1 ] && { step_done "$subj" step_4 || all_done=0; }
+    [ $has_bold -eq 1 ] && { step_done "$subj" step_5_9 || all_done=0; }
+
+    # Coupling requires CBF + ALFF
+    if [ $has_t1 -eq 1 ] && [ $has_bold -eq 1 ] && { [ $has_asl -eq 1 ] || [[ "$subj" == A1_* ]]; }; then
+        step_done "$subj" step_11 || all_done=0
+    fi
+
+    [ $all_done -eq 1 ]
 }
 
 # ---- Check if subject has already been processed (any step done) ----
